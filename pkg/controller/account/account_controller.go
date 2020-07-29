@@ -146,7 +146,7 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 
 	// Log accounts that have failed and don't attempt to reconcile them
 	if accountIsFailed(currentAcctInstance) {
-		reqLogger.Info(fmt.Sprintf("Account %s is failed ignoring", currentAcctInstance.Name))
+		reqLogger.Info("skipping failed account")
 		return reconcile.Result{}, nil
 	}
 
