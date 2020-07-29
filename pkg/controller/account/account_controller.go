@@ -670,7 +670,7 @@ func (r *ReconcileAccount) setAccountClaimError(reqLogger logr.Logger, currentAc
 			// If the accountClaim is not found, no need to update the accountClaim
 			return nil
 		}
-		reqLogger.Error(err, fmt.Sprintf("Unable to get accountClaim for %s", currentAccountInstance.Name))
+		reqLogger.Error(err, "unable to get accountclaim")
 		return err
 	}
 
@@ -702,7 +702,7 @@ func (r *ReconcileAccount) setAccountClaimError(reqLogger logr.Logger, currentAc
 	// Update the *accountClaim* status (not the account status)
 	err = r.Client.Status().Update(context.TODO(), accountClaim)
 	if err != nil {
-		reqLogger.Error(err, fmt.Sprintf("Status update for %s failed", accountClaim.Name))
+		reqLogger.Error(err, "failed to update accountclaim status", "accountclaim", accountClaim.Name)
 	}
 
 	return err
