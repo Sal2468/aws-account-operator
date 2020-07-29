@@ -135,9 +135,10 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 	// Remove finalizer if account CR is BYOC as the accountclaim controller will delete the account CR
 	// when the accountClaim CR is deleted as its set as the owner reference
 	if accountIsBYOCPendingDeletionWithFinalizer(currentAcctInstance) {
-		// Remove finalizer to unlock deletion of the accountClaim
-		err = r.removeFinalizer(reqLogger, currentAcctInstance, awsv1alpha1.AccountFinalizer)
+		reqLogger.Info("removing account finalizer")
+		err = r.removeFinalizer(currentAcctInstance, awsv1alpha1.AccountFinalizer)
 		if err != nil {
+			reqLogger.Error(err, "failed removing account finalizer")
 			return reconcile.Result{}, err
 		}
 		return reconcile.Result{}, nil
