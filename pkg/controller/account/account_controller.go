@@ -160,15 +160,30 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 		reqLogger.Error(err, "failed building AWS client")
 		return reconcile.Result{}, err
 	}
-	var byocRoleID string
-
+	var ccsRoleID string
 	// If the account is BYOC, needs some different set up
 	if newBYOCAccount(currentAcctInstance) {
-		byocRoleID, err = r.initializeNewBYOCAccount(reqLogger, currentAcctInstance, awsSetupClient, adminAccessArn)
-		if err != nil || byocRoleID == "" {
-			r.setStateFailed(reqLogger, currentAcctInstance, err.Error())
-			reqLogger.Error(err, "Failed setting up new BYOC account")
-			return reconcile.Result{}, err
+		// TODO: Chris - check why that is
+		// Need these to use = below, otherwise ccsRoleID fails syntax check as "unused"
+		var result reconcile.Result
+		var initErr error
+
+		ccsRoleID, result, initErr = r.initializeNewCCSAccount(reqLogger, currentAcctInstance, awsSetupClient, adminAccessArn)
+		if initErr != nil {
+			// TODO: If we have recoverable results from above, how do we allow them to requeue if state is failed
+			// TODO: Maybe move this down to byoc.go
+			r.setStateFailed(reqLogger, currentAcctInstance, initErr.Error())
+			reqLogger.Error(initErr, "failed creating new CCS account")
+			return result, initErr
+		}
+
+		utils.SetAccountStatus(currentAcctInstance, "CCS account creating", awsv1alpha1.AccountCreating, AccountCreating)
+		updateErr := r.Client.Status().Update(context.TODO(), currentAcctInstance)
+		if updateErr != nil {
+			// TODO: Validate this is retryable
+			// TODO: Should be re-entrant because account will not have state
+			reqLogger.Info("failed updating account state, retrying")
+			return reconcile.Result{}, updateErr
 		}
 	} else {
 		// Normal account creation
@@ -346,9 +361,9 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 			// If this is a BYOC account, check that BYOCAdminAccess role
 			// was the one used in the AssumedRole
 			// RoleID must exist in the AssumeRoleID string
-			match, _ := matchSubstring(byocRoleID, *creds.AssumedRoleUser.AssumedRoleId)
-			if byocRoleID != "" && match == false {
-				reqLogger.Info(fmt.Sprintf("Assumed RoleID:Session string does not match new RoleID: %s, %s", *creds.AssumedRoleUser.AssumedRoleId, byocRoleID))
+			match, _ := matchSubstring(ccsRoleID, *creds.AssumedRoleUser.AssumedRoleId)
+			if ccsRoleID != "" && match == false {
+				reqLogger.Info(fmt.Sprintf("Assumed RoleID:Session string does not match new RoleID: %s, %s", *creds.AssumedRoleUser.AssumedRoleId, ccsRoleID))
 				reqLogger.Info(fmt.Sprintf("Sleeping %d seconds", i))
 				time.Sleep(time.Duration(i) * time.Second)
 			} else {
@@ -644,6 +659,7 @@ func (r *ReconcileAccount) getAccountClaim(account *awsv1alpha1.Account) (*awsv1
 	accountClaim := &awsv1alpha1.AccountClaim{}
 	err := r.Client.Get(context.TODO(), types.NamespacedName{
 		Name: account.Spec.ClaimLink, Namespace: account.Spec.ClaimLinkNamespace}, accountClaim)
+
 	if err != nil {
 		return nil, err
 	}
