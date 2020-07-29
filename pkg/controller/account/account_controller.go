@@ -173,16 +173,15 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 			// TODO: If we have recoverable results from above, how do we allow them to requeue if state is failed
 			// TODO: Maybe move this down to byoc.go
 			r.setStateFailed(reqLogger, currentAcctInstance, initErr.Error())
-			reqLogger.Error(initErr, "failed creating new CCS account")
+			reqLogger.Error(initErr, "failed initializing new CCS account")
 			return result, initErr
 		}
-
-		utils.SetAccountStatus(currentAcctInstance, "CCS account creating", awsv1alpha1.AccountCreating, AccountCreating)
-		updateErr := r.Client.Status().Update(context.TODO(), currentAcctInstance)
+		utils.SetAccountStatus(currentAcctInstance, AccountCreating, awsv1alpha1.AccountCreating, AccountCreating)
+		updateErr := r.statusUpdate(currentAcctInstance)
 		if updateErr != nil {
 			// TODO: Validate this is retryable
 			// TODO: Should be re-entrant because account will not have state
-			reqLogger.Info("failed updating account state, retrying")
+			reqLogger.Info("failed updating account state, retrying", "desired state", AccountCreating)
 			return reconcile.Result{}, updateErr
 		}
 	} else {
@@ -199,13 +198,14 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 					if err != nil {
 						return reconcile.Result{}, err
 					}
-					reqLogger.Info("Case created", "CaseID", caseID)
+					reqLogger.Info("case created", "CaseID", caseID)
 
 					// Update supportCaseId in CR
 					currentAcctInstance.Status.SupportCaseID = caseID
 					utils.SetAccountStatus(currentAcctInstance, "Account pending verification in AWS", awsv1alpha1.AccountPendingVerification, AccountPendingVerification)
-					err = r.statusUpdate(reqLogger, currentAcctInstance)
+					err = r.statusUpdate(currentAcctInstance)
 					if err != nil {
+						reqLogger.Error(err, "failed to update account state, retrying", "desired state", AccountPendingVerification)
 						return reconcile.Result{}, err
 					}
 
@@ -238,10 +238,10 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 
 			// Case Resolved, account is Ready
 			if resolved {
-				reqLogger.Info(fmt.Sprintf("Case %s resolved", currentAcctInstance.Status.SupportCaseID))
+				reqLogger.Info("case resolved", "caseID", currentAcctInstance.Status.SupportCaseID)
 
 				utils.SetAccountStatus(currentAcctInstance, "Account ready to be claimed", awsv1alpha1.AccountReady, AccountReady)
-				err = r.statusUpdate(reqLogger, currentAcctInstance)
+				err = r.statusUpdate(currentAcctInstance)
 				if err != nil {
 					return reconcile.Result{}, err
 				}
@@ -249,17 +249,14 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 			}
 
 			// Case not Resolved, log info and try again in pre-defined interval
-			reqLogger.Info(fmt.Sprintf(`Case %s not resolved,
-			trying again in %d minutes`,
-				currentAcctInstance.Status.SupportCaseID,
-				intervalBetweenChecksMinutes))
+			reqLogger.Info("case not yet resolved, retrying", "caseID", currentAcctInstance.Status.SupportCaseID, "retry delay", intervalBetweenChecksMinutes)
 			return reconcile.Result{RequeueAfter: intervalBetweenChecksMinutes * time.Minute}, nil
 		}
 
 		// Update account Status.Claimed to true if the account is ready and the claim link is not empty
 		if accountIsReadyUnclaimedAndHasClaimLink(currentAcctInstance) {
 			currentAcctInstance.Status.Claimed = true
-			return reconcile.Result{}, r.statusUpdate(reqLogger, currentAcctInstance)
+			return reconcile.Result{}, r.statusUpdate(currentAcctInstance)
 		}
 
 		// see if in creating for longer then default wait time
@@ -290,8 +287,8 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 				}
 
 				// set state creating if the account was able to create
-				utils.SetAccountStatus(currentAcctInstance, "Attempting to create account", awsv1alpha1.AccountCreating, AccountCreating)
-				err = r.statusUpdate(reqLogger, currentAcctInstance)
+				utils.SetAccountStatus(currentAcctInstance, AccountCreating, awsv1alpha1.AccountCreating, AccountCreating)
+				err = r.statusUpdate(currentAcctInstance)
 
 				if err != nil {
 					return reconcile.Result{}, err
@@ -317,7 +314,7 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 
 				// set state creating if the account was already created
 				utils.SetAccountStatus(currentAcctInstance, "AWS account already created", awsv1alpha1.AccountCreating, AccountCreating)
-				err = r.statusUpdate(reqLogger, currentAcctInstance)
+				err = r.statusUpdate(currentAcctInstance)
 
 				if err != nil {
 					return reconcile.Result{}, err
@@ -330,7 +327,7 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 	// Account init for both BYOC and Non-BYOC
 	if accountReadyForInitialization(currentAcctInstance) {
 
-		reqLogger.Info(fmt.Sprintf("Initalizing account: %s AWS ID: %s", currentAcctInstance.Name, currentAcctInstance.Spec.AwsAccountID))
+		reqLogger.Info("initializing account", "awsAccountID", currentAcctInstance.Spec.AwsAccountID)
 		var roleToAssume string
 		var iamUserUHC = iamUserNameUHC
 		var iamUserSRE = iamUserNameSRE
@@ -461,7 +458,7 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 				reqLogger.Info(msg)
 			}
 		}
-		err = r.statusUpdate(reqLogger, currentAcctInstance)
+		err = r.statusUpdate(currentAcctInstance)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
@@ -498,7 +495,7 @@ func (r *ReconcileAccount) BuildAccount(reqLogger logr.Logger, awsClient awsclie
 		switch orgErr {
 		case awsv1alpha1.ErrAwsFailedCreateAccount:
 			utils.SetAccountStatus(account, "Failed to create AWS Account", awsv1alpha1.AccountFailed, AccountFailed)
-			err := r.statusUpdate(reqLogger, account)
+			err := r.statusUpdate(account)
 			if err != nil {
 				return "", err
 			}
@@ -628,12 +625,8 @@ func formatAccountEmail(name string) string {
 	return email
 }
 
-func (r *ReconcileAccount) statusUpdate(reqLogger logr.Logger, account *awsv1alpha1.Account) error {
+func (r *ReconcileAccount) statusUpdate(account *awsv1alpha1.Account) error {
 	err := r.Client.Status().Update(context.TODO(), account)
-	if err != nil {
-		reqLogger.Error(err, fmt.Sprintf("Status update for %s failed", account.Name))
-	}
-	reqLogger.Info(fmt.Sprintf("Status updated for %s", account.Name))
 	return err
 }
 
@@ -651,7 +644,11 @@ func (r *ReconcileAccount) setStateFailed(reqLogger logr.Logger, currentAcctInst
 	}
 
 	// Apply the update
-	err = r.statusUpdate(reqLogger, currentAcctInstance)
+	err = r.statusUpdate(currentAcctInstance)
+	if err != nil {
+		reqLogger.Error(err, "failed to update status")
+	}
+	// TODO: Need to cause this to requeue again
 	return err
 }
 
