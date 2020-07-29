@@ -157,7 +157,7 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 		AwsRegion:  "us-east-1",
 	})
 	if err != nil {
-		reqLogger.Error(err, "Failed to get AWS client")
+		reqLogger.Error(err, "failed building AWS client")
 		return reconcile.Result{}, err
 	}
 	var byocRoleID string
