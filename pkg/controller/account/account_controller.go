@@ -171,7 +171,6 @@ func (r *ReconcileAccount) Reconcile(request reconcile.Request) (reconcile.Resul
 		ccsRoleID, result, initErr = r.initializeNewCCSAccount(reqLogger, currentAcctInstance, awsSetupClient, adminAccessArn)
 		if initErr != nil {
 			// TODO: If we have recoverable results from above, how do we allow them to requeue if state is failed
-			// TODO: Maybe move this down to byoc.go
 			r.setStateFailed(reqLogger, currentAcctInstance, initErr.Error())
 			reqLogger.Error(initErr, "failed initializing new CCS account")
 			return result, initErr
@@ -521,7 +520,7 @@ func (r *ReconcileAccount) BuildAccount(reqLogger logr.Logger, awsClient awsclie
 		reqLogger.Error(err, "Unable to get updated Account object after status update")
 	}
 
-	reqLogger.Info("Account Created")
+	reqLogger.Info("account created successfully")
 
 	return *orgOutput.CreateAccountStatus.AccountId, nil
 }
@@ -594,19 +593,16 @@ func checkAWSAccountsLimitReached(r *ReconcileAccount, reqLogger logr.Logger, cu
 	instance := &corev1.ConfigMap{}
 	err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: awsv1alpha1.AccountCrNamespace, Name: awsv1alpha1.DefaultConfigMap}, instance)
 	if err != nil {
-		unexpectedErrorMsg := fmt.Sprintf("%s: Failed to retrieve default ConfigMap, account limit defaulting to 100", awsv1alpha1.ErrMissingDefaultConfigMap)
-		reqLogger.Info(unexpectedErrorMsg)
+		reqLogger.Error(awsv1alpha1.ErrMissingDefaultConfigMap, "failed to retrieve default configmap, account limit defaulting to 100")
 	} else {
 		if limit, ok := instance.Data["account-limit"]; ok {
 			if i, err := strconv.Atoi(limit); err == nil {
 				reqLogger.Info(fmt.Sprintf("Number of Current Accounts: %d -- Account Limit: %d", currentAccounts, i))
 				return i <= currentAccounts, nil
 			}
-			unexpectedErrorMsg := fmt.Sprintf("Account: Failed to convert ConfigMap 'account-limit' string field to int, account limit defaulting to 100")
-			reqLogger.Info(unexpectedErrorMsg)
+			reqLogger.Error(awsv1alpha1.ErrInvalidConfigMap, "failed to convert configmap 'account-limit' field to int, account limit defaulting to 100")
 		} else {
-			unexpectedErrorMsg := fmt.Sprintf("%s: Default ConfigMap missing 'account-limit' field, account limit defaulting to 100", awsv1alpha1.ErrInvalidConfigMap)
-			reqLogger.Info(unexpectedErrorMsg)
+			reqLogger.Error(awsv1alpha1.ErrInvalidConfigMap, "default config map missing 'account-limit' field, account limit defaulting to 100")
 		}
 	}
 	return awsv1alpha1.DefaultConfigMapAccountLimit <= currentAccounts, err
